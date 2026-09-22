@@ -26,129 +26,153 @@ export interface ManutencaoParaPdf {
 export interface RelatorioSemanalProps {
   clienteNome: string;
   sindico: string | null;
-  periodoInicio: string; // ISO yyyy-MM-dd
+  periodoInicio: string;
   periodoFim: string;
   manutencoes: ManutencaoParaPdf[];
 }
 
 // ---------------------------------------------------------------------------
-// Cores (RGB 0-1)
+// Cores
 // ---------------------------------------------------------------------------
 
 const COR = {
-  primaria:    rgb(0.078, 0.388, 0.851), // #1463D9
-  texto:       rgb(0.122, 0.161, 0.216), // #1F2937
-  suave:       rgb(0.420, 0.447, 0.502), // #6B7280
-  borda:       rgb(0.898, 0.910, 0.922), // #E5E7EB
-  fundo:       rgb(0.973, 0.980, 0.988), // #F8FAFC
-  branco:      rgb(1, 1, 1),
-  pendente:    rgb(0.706, 0.275, 0.035), // #B45309
-  andamento:   rgb(0.078, 0.388, 0.851), // #1463D9
-  resolvida:   rgb(0.086, 0.502, 0.239), // #15803D
+  primaria:  rgb(0.078, 0.388, 0.851),
+  texto:     rgb(0.122, 0.161, 0.216),
+  suave:     rgb(0.420, 0.447, 0.502),
+  borda:     rgb(0.898, 0.910, 0.922),
+  fundo:     rgb(0.973, 0.980, 0.988),
+  branco:    rgb(1, 1, 1),
+  pendente:  rgb(0.706, 0.275, 0.035),
+  andamento: rgb(0.078, 0.388, 0.851),
+  resolvida: rgb(0.086, 0.502, 0.239),
 };
 
 const COR_STATUS: Record<string, ReturnType<typeof rgb>> = {
-  pendente:    COR.pendente,
+  pendente:     COR.pendente,
   em_andamento: COR.andamento,
-  resolvida:   COR.resolvida,
+  resolvida:    COR.resolvida,
 };
 
 const ROTULO_STATUS: Record<string, string> = {
-  pendente:    "Pendente",
+  pendente:     "Pendente",
   em_andamento: "Em andamento",
-  resolvida:   "Resolvida",
+  resolvida:    "Resolvida",
 };
 
 // ---------------------------------------------------------------------------
-// Helpers de layout
+// Constantes de layout
 // ---------------------------------------------------------------------------
 
-// Largura e margens da página A4
+// pdf-lib: origem no canto INFERIOR ESQUERDO, Y cresce para CIMA.
+// Toda a lógica usa "cursor Y" que começa alto e DECRESCE conforme
+// o conteúdo avança para baixo da página.
+
 const [PG_W, PG_H] = PageSizes.A4; // 595.28 x 841.89 pt
-const MARGEM = 32;
-const CONTEUDO_W = PG_W - MARGEM * 2;
+const MAR           = 36;           // margem lateral e vertical
+const CONT_W        = PG_W - MAR * 2;
+const CAB_H         = 56;           // altura do cabeçalho
+const ROD_H         = 20;           // altura do rodapé
+// Cursor Y onde o conteúdo começa (logo abaixo do cabeçalho)
+const Y_TOPO        = PG_H - MAR - CAB_H - 10;
+// Cursor Y mínimo antes de virar página (acima do rodapé)
+const Y_BASE        = MAR + ROD_H + 10;
+const PADDING_CARD  = 10;
+const INNER_W       = CONT_W - PADDING_CARD * 2;
 
-function hexParaRgb(hex: string): ReturnType<typeof rgb> {
-  const n = parseInt(hex.replace("#", ""), 16);
-  return rgb(((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255);
-}
+// ---------------------------------------------------------------------------
+// Tipos internos
+// ---------------------------------------------------------------------------
 
-/** Quebra um texto em linhas que cabem em `maxWidth` pontos. */
-function quebrarTexto(
-  texto: string,
-  fonte: Awaited<ReturnType<PDFDocument["embedFont"]>>,
-  tamanho: number,
-  maxWidth: number
-): string[] {
-  const palavras = texto.split(" ");
-  const linhas: string[] = [];
-  let linha = "";
+type Fonte = Awaited<ReturnType<PDFDocument["embedFont"]>>;
+type Pagina = ReturnType<PDFDocument["addPage"]>;
 
-  for (const palavra of palavras) {
-    const candidata = linha ? `${linha} ${palavra}` : palavra;
-    if (fonte.widthOfTextAtSize(candidata, tamanho) <= maxWidth) {
-      linha = candidata;
-    } else {
-      if (linha) linhas.push(linha);
-      // Se a palavra sozinha não cabe, corta caractere a caractere
-      if (fonte.widthOfTextAtSize(palavra, tamanho) > maxWidth) {
-        let parte = "";
-        for (const char of palavra) {
-          if (fonte.widthOfTextAtSize(parte + char, tamanho) <= maxWidth) {
-            parte += char;
-          } else {
-            if (parte) linhas.push(parte);
-            parte = char;
-          }
-        }
-        linha = parte;
+// ---------------------------------------------------------------------------
+// Utilitários de texto
+// ---------------------------------------------------------------------------
+
+/**
+ * Quebra texto em linhas que cabem em maxW pontos.
+ * Respeita quebras de linha (\n) existentes no texto.
+ */
+function quebrarTexto(texto: string, fonte: Fonte, tam: number, maxW: number): string[] {
+  const resultado: string[] = [];
+
+  for (const paragrafo of texto.split("\n")) {
+    const palavras = paragrafo.split(" ");
+    let linha = "";
+
+    for (const palavra of palavras) {
+      const candidata = linha ? `${linha} ${palavra}` : palavra;
+      if (fonte.widthOfTextAtSize(candidata, tam) <= maxW) {
+        linha = candidata;
       } else {
-        linha = palavra;
+        if (linha) resultado.push(linha);
+        // Palavra maior que a linha: corta por caractere
+        if (fonte.widthOfTextAtSize(palavra, tam) > maxW) {
+          let parte = "";
+          for (const ch of palavra) {
+            if (fonte.widthOfTextAtSize(parte + ch, tam) <= maxW) {
+              parte += ch;
+            } else {
+              if (parte) resultado.push(parte);
+              parte = ch;
+            }
+          }
+          linha = parte;
+        } else {
+          linha = palavra;
+        }
       }
     }
+    if (linha) resultado.push(linha);
   }
-  if (linha) linhas.push(linha);
-  return linhas;
+
+  return resultado.length > 0 ? resultado : [""];
 }
 
-/** Desenha texto com quebra automática e retorna a altura consumida. */
-function desenharTextoQuebrado(
-  page: ReturnType<PDFDocument["addPage"]>,
+/** Altura total que um bloco de texto ocupa. */
+function altTexto(texto: string, fonte: Fonte, tam: number, maxW: number, leading = 1.4): number {
+  if (!texto?.trim()) return 0;
+  return quebrarTexto(texto, fonte, tam, maxW).length * tam * leading;
+}
+
+/**
+ * Desenha texto com quebra de linha.
+ * cursor Y aponta para o TOPO da primeira linha.
+ * Retorna a altura total consumida.
+ */
+function drawText(
+  pg: Pagina,
   texto: string,
-  fonte: Awaited<ReturnType<PDFDocument["embedFont"]>>,
-  tamanho: number,
+  fonte: Fonte,
+  tam: number,
   cor: ReturnType<typeof rgb>,
   x: number,
-  y: number,
-  maxWidth: number,
-  espacoEntreLinhas = 1.35
+  cursorY: number,
+  maxW: number,
+  leading = 1.4
 ): number {
-  if (!texto) return 0;
-  const linhas = quebrarTexto(texto, fonte, tamanho, maxWidth);
-  const alturaLinha = tamanho * espacoEntreLinhas;
+  if (!texto?.trim()) return 0;
+  const linhas = quebrarTexto(texto, fonte, tam, maxW);
+  const altLinha = tam * leading;
+  // pdf-lib: y = baseline. Baseline ≈ topo - tam * 0.75
   linhas.forEach((linha, i) => {
-    page.drawText(linha, { x, y: y - i * alturaLinha, size: tamanho, font: fonte, color: cor });
+    pg.drawText(linha, {
+      x,
+      y: cursorY - tam * 0.85 - i * altLinha,
+      size: tam,
+      font: fonte,
+      color: cor,
+    });
   });
-  return linhas.length * alturaLinha;
+  return linhas.length * altLinha;
 }
 
-/** Retorna a altura que um bloco de texto ocuparia (sem desenhar). */
-function alturaTexto(
-  texto: string,
-  fonte: Awaited<ReturnType<PDFDocument["embedFont"]>>,
-  tamanho: number,
-  maxWidth: number,
-  espacoEntreLinhas = 1.35
-): number {
-  if (!texto) return 0;
-  return quebrarTexto(texto, fonte, tamanho, maxWidth).length * tamanho * espacoEntreLinhas;
-}
-
-function formatarDataHora(iso: string) {
+function fmtDataHora(iso: string) {
   return format(new Date(iso), "dd/MM/yyyy 'às' HH:mm", { locale: ptBR });
 }
 
-function formatarData(iso: string) {
+function fmtData(iso: string) {
   return format(new Date(`${iso}T00:00:00`), "dd/MM/yyyy");
 }
 
@@ -163,299 +187,347 @@ export async function gerarRelatorioSemanal(props: RelatorioSemanalProps): Promi
   doc.setTitle(`Relatório de manutenções — ${clienteNome}`);
   doc.setCreator("Evolux Gestão Condominial");
 
-  // Fontes padrão PDF — embutidas na spec, sem arquivos externos
-  const fontNormal = await doc.embedFont(StandardFonts.Helvetica);
-  const fontBold   = await doc.embedFont(StandardFonts.HelveticaBold);
+  const fontN = await doc.embedFont(StandardFonts.Helvetica);
+  const fontB = await doc.embedFont(StandardFonts.HelveticaBold);
 
-  // Logo da marca (opcional — silencia se não encontrar)
+  // Logo (opcional)
   let logoPng: Awaited<ReturnType<typeof doc.embedPng>> | null = null;
   try {
-    const logoPath = path.join(process.cwd(), "public", "marca.png");
-    const logoBytes = fs.readFileSync(logoPath);
+    const logoBytes = fs.readFileSync(path.join(process.cwd(), "public", "marca.png"));
     logoPng = await doc.embedPng(logoBytes);
-  } catch {
-    logoPng = null;
-  }
+  } catch { /* sem logo */ }
 
-  const resolvidas  = manutencoes.filter((m) => m.status === "resolvida").length;
-  const pendentes   = manutencoes.filter((m) => m.status === "pendente").length;
-  const andamento   = manutencoes.filter((m) => m.status === "em_andamento").length;
-  const geradoEm    = format(new Date(), "dd/MM/yyyy 'às' HH:mm", { locale: ptBR });
+  const total     = manutencoes.length;
+  const resolvidas = manutencoes.filter((m) => m.status === "resolvida").length;
+  const pendentes  = manutencoes.filter((m) => m.status === "pendente").length;
+  const andamento  = manutencoes.filter((m) => m.status === "em_andamento").length;
+  const geradoEm   = format(new Date(), "dd/MM/yyyy 'às' HH:mm", { locale: ptBR });
 
   // -------------------------------------------------------------------
-  // Helpers de paginação
+  // Estado de paginação
   // -------------------------------------------------------------------
 
-  // Altura reservada para o cabeçalho fixo no topo de cada página
-  const CABECALHO_H = 52;
-  // Altura reservada para o rodapé fixo na base de cada página
-  const RODAPE_H = 24;
-  // Y inicial do conteúdo (logo abaixo do cabeçalho)
-  const Y_INICIO = PG_H - MARGEM - CABECALHO_H - 12;
-  // Y mínimo antes de virar página (acima do rodapé)
-  const Y_MIN = MARGEM + RODAPE_H + 8;
+  let pg    = doc.addPage(PageSizes.A4);
+  let curY  = Y_TOPO;
+  let numPg = 1;
 
-  let paginaAtual = doc.addPage(PageSizes.A4);
-  let y = Y_INICIO;
+  // -------------------------------------------------------------------
+  // Cabeçalho (redesenhado em cada página nova)
+  // -------------------------------------------------------------------
 
-  function desenharCabecalho(pg: ReturnType<typeof doc.addPage>) {
-    const yBase = PG_H - MARGEM;
+  function desenharCabecalho(p: Pagina) {
+    const yTopo = PG_H - MAR;
 
-    // Linha azul inferior do cabeçalho
-    pg.drawLine({
-      start: { x: MARGEM, y: yBase - CABECALHO_H },
-      end:   { x: PG_W - MARGEM, y: yBase - CABECALHO_H },
+    // Linha azul separadora
+    p.drawLine({
+      start: { x: MAR, y: yTopo - CAB_H },
+      end:   { x: PG_W - MAR, y: yTopo - CAB_H },
       thickness: 2,
       color: COR.primaria,
     });
 
-    // Logo ou nome do sistema
+    // Logo ou texto "Evolux"
     if (logoPng) {
       const dim = logoPng.scaleToFit(36, 36);
-      pg.drawImage(logoPng, { x: MARGEM, y: yBase - dim.height, width: dim.width, height: dim.height });
+      p.drawImage(logoPng, {
+        x: MAR,
+        y: yTopo - dim.height,
+        width: dim.width,
+        height: dim.height,
+      });
     } else {
-      pg.drawText("Evolux", { x: MARGEM, y: yBase - 18, size: 18, font: fontBold, color: COR.primaria });
-    }
-    pg.drawText("Relatório semanal de manutenções", {
-      x: MARGEM, y: yBase - CABECALHO_H + 8, size: 9, font: fontNormal, color: COR.suave,
-    });
-
-    // Cliente e período (alinhados à direita)
-    const nomeW = fontBold.widthOfTextAtSize(clienteNome, 12);
-    pg.drawText(clienteNome, {
-      x: PG_W - MARGEM - nomeW, y: yBase - 14, size: 12, font: fontBold, color: COR.texto,
-    });
-
-    if (sindico) {
-      const sindicoTxt = `A/C: ${sindico}`;
-      const sindicoW = fontNormal.widthOfTextAtSize(sindicoTxt, 9);
-      pg.drawText(sindicoTxt, {
-        x: PG_W - MARGEM - sindicoW, y: yBase - 28, size: 9, font: fontNormal, color: COR.suave,
+      p.drawText("Evolux", {
+        x: MAR, y: yTopo - 20,
+        size: 18, font: fontB, color: COR.primaria,
       });
     }
 
-    const periodTxt = `${formatarData(periodoInicio)} a ${formatarData(periodoFim)}`;
-    const periodW = fontNormal.widthOfTextAtSize(periodTxt, 9);
-    pg.drawText(periodTxt, {
-      x: PG_W - MARGEM - periodW,
-      y: yBase - (sindico ? 40 : 28),
-      size: 9, font: fontNormal, color: COR.suave,
+    p.drawText("Relatório semanal de manutenções", {
+      x: MAR, y: yTopo - CAB_H + 10,
+      size: 9, font: fontN, color: COR.suave,
+    });
+
+    // Cliente (direita)
+    const nomeW = fontB.widthOfTextAtSize(clienteNome, 12);
+    p.drawText(clienteNome, {
+      x: PG_W - MAR - nomeW, y: yTopo - 16,
+      size: 12, font: fontB, color: COR.texto,
+    });
+
+    let offsetDireita = 30;
+    if (sindico) {
+      const txt = `A/C: ${sindico}`;
+      const w = fontN.widthOfTextAtSize(txt, 9);
+      p.drawText(txt, {
+        x: PG_W - MAR - w, y: yTopo - offsetDireita,
+        size: 9, font: fontN, color: COR.suave,
+      });
+      offsetDireita += 14;
+    }
+
+    const periodo = `${fmtData(periodoInicio)} a ${fmtData(periodoFim)}`;
+    const periodoW = fontN.widthOfTextAtSize(periodo, 9);
+    p.drawText(periodo, {
+      x: PG_W - MAR - periodoW, y: yTopo - offsetDireita,
+      size: 9, font: fontN, color: COR.suave,
     });
   }
 
-  function desenharRodape(pg: ReturnType<typeof doc.addPage>, numPagina: number) {
-    const yRodape = MARGEM + RODAPE_H - 6;
-    pg.drawLine({
-      start: { x: MARGEM, y: yRodape + 10 },
-      end:   { x: PG_W - MARGEM, y: yRodape + 10 },
+  // -------------------------------------------------------------------
+  // Rodapé
+  // -------------------------------------------------------------------
+
+  function desenharRodape(p: Pagina, num: number) {
+    const yLinha = MAR + ROD_H;
+    p.drawLine({
+      start: { x: MAR, y: yLinha },
+      end:   { x: PG_W - MAR, y: yLinha },
       thickness: 0.5, color: COR.borda,
     });
-    pg.drawText(`Gerado em ${geradoEm} pelo Evolux Gestão Condominial`, {
-      x: MARGEM, y: yRodape, size: 7.5, font: fontNormal, color: COR.suave,
+    p.drawText(`Gerado em ${geradoEm} pelo Evolux Gestão Condominial`, {
+      x: MAR, y: MAR + 5,
+      size: 7.5, font: fontN, color: COR.suave,
     });
-    const pgTxt = `Página ${numPagina}`;
-    const pgW = fontNormal.widthOfTextAtSize(pgTxt, 7.5);
-    pg.drawText(pgTxt, {
-      x: PG_W - MARGEM - pgW, y: yRodape, size: 7.5, font: fontNormal, color: COR.suave,
+    const pgTxt = `Página ${num}`;
+    const pgW = fontN.widthOfTextAtSize(pgTxt, 7.5);
+    p.drawText(pgTxt, {
+      x: PG_W - MAR - pgW, y: MAR + 5,
+      size: 7.5, font: fontN, color: COR.suave,
     });
   }
 
-  // Mapa de páginas para numerar no rodapé depois
-  const paginas: ReturnType<typeof doc.addPage>[] = [paginaAtual];
-  desenharCabecalho(paginaAtual);
+  // Desenha cabeçalho na primeira página
+  desenharCabecalho(pg);
 
-  function novaParagrafo(alturaMinima: number) {
-    if (y - alturaMinima < Y_MIN) {
-      desenharRodape(paginaAtual, paginas.length);
-      paginaAtual = doc.addPage(PageSizes.A4);
-      paginas.push(paginaAtual);
-      desenharCabecalho(paginaAtual);
-      y = Y_INICIO;
-    }
+  // -------------------------------------------------------------------
+  // Nova página
+  // -------------------------------------------------------------------
+
+  function novaPage() {
+    desenharRodape(pg, numPg);
+    numPg++;
+    pg   = doc.addPage(PageSizes.A4);
+    curY = Y_TOPO;
+    desenharCabecalho(pg);
+  }
+
+  /** Garante espaço para `h` pontos; se não couber, vira página. */
+  function garantirEspaco(h: number) {
+    if (curY - h < Y_BASE) novaPage();
   }
 
   // -------------------------------------------------------------------
   // Bloco de resumo
   // -------------------------------------------------------------------
-  const RESUMO_H = 42;
-  novaParagrafo(RESUMO_H + 8);
 
-  paginaAtual.drawRectangle({
-    x: MARGEM, y: y - RESUMO_H,
-    width: CONTEUDO_W, height: RESUMO_H,
-    color: COR.fundo, borderWidth: 0,
+  const RESUMO_H = 44;
+  garantirEspaco(RESUMO_H + 12);
+
+  // Fundo cinza
+  pg.drawRectangle({
+    x: MAR, y: curY - RESUMO_H,
+    width: CONT_W, height: RESUMO_H,
+    color: COR.fundo,
   });
 
   const resumoItens = [
-    { valor: String(manutencoes.length), rotulo: "Total no período", cor: COR.texto },
-    { valor: String(pendentes),          rotulo: "Pendentes",        cor: COR.pendente },
-    { valor: String(andamento),          rotulo: "Em andamento",     cor: COR.andamento },
-    { valor: String(resolvidas),         rotulo: "Resolvidas",       cor: COR.resolvida },
+    { valor: String(total),     rotulo: "Total no período", cor: COR.texto },
+    { valor: String(pendentes), rotulo: "Pendentes",        cor: COR.pendente },
+    { valor: String(andamento), rotulo: "Em andamento",     cor: COR.andamento },
+    { valor: String(resolvidas),rotulo: "Resolvidas",       cor: COR.resolvida },
   ];
 
-  const colunaW = CONTEUDO_W / resumoItens.length;
+  const colW = CONT_W / resumoItens.length;
   resumoItens.forEach((item, i) => {
-    const cx = MARGEM + i * colunaW + colunaW / 2;
-    const valorW = fontBold.widthOfTextAtSize(item.valor, 14);
-    paginaAtual.drawText(item.valor, {
-      x: cx - valorW / 2, y: y - 18, size: 14, font: fontBold, color: item.cor,
+    const cx = MAR + i * colW + colW / 2;
+
+    const vW = fontB.widthOfTextAtSize(item.valor, 14);
+    pg.drawText(item.valor, {
+      x: cx - vW / 2,
+      y: curY - 20,
+      size: 14, font: fontB, color: item.cor,
     });
-    const rotuloW = fontNormal.widthOfTextAtSize(item.rotulo, 8);
-    paginaAtual.drawText(item.rotulo, {
-      x: cx - rotuloW / 2, y: y - 32, size: 8, font: fontNormal, color: COR.suave,
+
+    const rW = fontN.widthOfTextAtSize(item.rotulo, 8);
+    pg.drawText(item.rotulo, {
+      x: cx - rW / 2,
+      y: curY - 36,
+      size: 8, font: fontN, color: COR.suave,
     });
   });
 
-  y -= RESUMO_H + 12;
+  curY -= RESUMO_H + 14;
 
   // -------------------------------------------------------------------
   // Sem manutenções
   // -------------------------------------------------------------------
+
   if (manutencoes.length === 0) {
-    novaParagrafo(20);
+    garantirEspaco(20);
     const msg = "Nenhuma manutenção registrada neste período.";
-    const msgW = fontNormal.widthOfTextAtSize(msg, 10);
-    paginaAtual.drawText(msg, {
-      x: MARGEM + (CONTEUDO_W - msgW) / 2, y, size: 10, font: fontNormal, color: COR.suave,
+    const msgW = fontN.widthOfTextAtSize(msg, 10);
+    pg.drawText(msg, {
+      x: MAR + (CONT_W - msgW) / 2,
+      y: curY - 14,
+      size: 10, font: fontN, color: COR.suave,
     });
-    y -= 20;
+    curY -= 24;
   }
 
   // -------------------------------------------------------------------
   // Cards de manutenção
   // -------------------------------------------------------------------
+
   for (const man of manutencoes) {
-    const PADDING = 10;
-    const INNER_W = CONTEUDO_W - PADDING * 2;
+    // --- Pré-calcula altura total do card ---
+    const TAM_CODIGO = 9;
+    const TAM_LOCAL  = 11;
+    const TAM_DESC   = 9.5;
+    const TAM_META   = 8;
+    const LEADING    = 1.4;
 
-    // Pré-calcula a altura do card para decidir se cabe na página atual
-    const altCodigo  = 10 * 1.3;
-    const altLocal   = alturaTexto(man.local_descricao, fontBold, 11, INNER_W);
-    const altDesc    = alturaTexto(man.descricao, fontNormal, 9.5, INNER_W);
-    const altMeta    = 8 * 1.3;
-    const FOTO_H     = man.fotosRegistro.length > 0 ? 88 : 0;
-    const altResolucao = man.status === "resolvida"
-      ? 14 + alturaTexto(man.resolucao_descricao ?? "", fontNormal, 9.5, INNER_W) + (man.resolvido_em ? altMeta : 0) + (man.fotosResolucao.length > 0 ? 88 : 0)
-      : 0;
+    const hCodigo  = TAM_CODIGO * LEADING + 2;
+    const hLocal   = altTexto(man.local_descricao,  fontB, TAM_LOCAL, INNER_W, LEADING) + 4;
+    const hDesc    = altTexto(man.descricao,         fontN, TAM_DESC,  INNER_W, LEADING) + 2;
+    const hMeta    = TAM_META * LEADING + 6;
+    const hFotoReg = man.fotosRegistro.length  > 0 ? 88 + 6 : 0;
 
-    const altCard = PADDING * 2 + altCodigo + altLocal + 6 + altDesc + altMeta + FOTO_H + altResolucao + 8;
-
-    novaParagrafo(Math.min(altCard, PG_H - MARGEM * 2 - CABECALHO_H - RODAPE_H));
-
-    // Borda do card
-    paginaAtual.drawRectangle({
-      x: MARGEM, y: y - altCard,
-      width: CONTEUDO_W, height: altCard,
-      borderColor: COR.borda, borderWidth: 1, color: COR.branco,
-    });
-
-    let cy = y - PADDING;
-
-    // Código e tipo
-    paginaAtual.drawText(`#${man.codigo} · ${man.tipo_nome}`, {
-      x: MARGEM + PADDING, y: cy - 10, size: 9, font: fontNormal, color: COR.suave,
-    });
-
-    // Tag de status (alinhada à direita)
-    const tagTxt = ROTULO_STATUS[man.status] ?? man.status;
-    const tagW   = fontNormal.widthOfTextAtSize(tagTxt, 8) + 12;
-    const tagCor = COR_STATUS[man.status] ?? COR.suave;
-    paginaAtual.drawRectangle({
-      x: PG_W - MARGEM - PADDING - tagW, y: cy - 16,
-      width: tagW, height: 14,
-      color: tagCor, borderWidth: 0,
-    });
-    paginaAtual.drawText(tagTxt, {
-      x: PG_W - MARGEM - PADDING - tagW + 6, y: cy - 12,
-      size: 8, font: fontNormal, color: COR.branco,
-    });
-
-    cy -= altCodigo + 4;
-
-    // Local
-    const altLocalReal = desenharTextoQuebrado(
-      paginaAtual, man.local_descricao, fontBold, 11, COR.texto,
-      MARGEM + PADDING, cy, INNER_W
-    );
-    cy -= altLocalReal + 6;
-
-    // Descrição
-    const altDescReal = desenharTextoQuebrado(
-      paginaAtual, man.descricao, fontNormal, 9.5, COR.texto,
-      MARGEM + PADDING, cy, INNER_W
-    );
-    cy -= altDescReal;
-
-    // Meta: registrado por / em
-    const metaTxt = `Registrado em ${formatarDataHora(man.registrado_em)} por ${man.registrado_por_nome}`;
-    desenharTextoQuebrado(paginaAtual, metaTxt, fontNormal, 8, COR.suave, MARGEM + PADDING, cy, INNER_W);
-    cy -= altMeta + 4;
-
-    // Fotos de registro
-    if (man.fotosRegistro.length > 0) {
-      const fotosParaDesenhar = man.fotosRegistro.slice(0, 5); // máximo 5 por linha
-      let fx = MARGEM + PADDING;
-      for (const foto of fotosParaDesenhar) {
-        try {
-          const imgBytes = Buffer.from(foto.dataUri.split(",")[1], "base64");
-          const img = await doc.embedJpg(imgBytes);
-          const dim = img.scaleToFit(84, 84);
-          paginaAtual.drawImage(img, { x: fx, y: cy - dim.height, width: dim.width, height: dim.height });
-          fx += dim.width + 4;
-        } catch { /* ignora foto corrompida */ }
-      }
-      cy -= 88;
+    let hResolucao = 0;
+    if (man.status === "resolvida") {
+      hResolucao += 8 + 14; // linha separadora + label "Resolução"
+      hResolucao += altTexto(man.resolucao_descricao ?? "", fontN, TAM_DESC, INNER_W, LEADING) + 2;
+      if (man.resolvido_em) hResolucao += TAM_META * LEADING + 4;
+      if (man.fotosResolucao.length > 0) hResolucao += 88 + 6;
     }
 
-    // Bloco de resolução
+    const hCard = PADDING_CARD * 2 + hCodigo + hLocal + hDesc + hMeta + hFotoReg + hResolucao;
+
+    // Se o card inteiro cabe na página, garante o espaço de uma vez.
+    // Se for maior que a área disponível, deixa fluir (vai cortar no Y_BASE).
+    const espacoMaximo = Y_TOPO - Y_BASE;
+    garantirEspaco(Math.min(hCard, espacoMaximo));
+
+    const cardTop = curY;
+    const cardBot = curY - hCard;
+
+    // Retângulo do card
+    pg.drawRectangle({
+      x: MAR, y: cardBot,
+      width: CONT_W, height: hCard,
+      color: COR.branco,
+      borderColor: COR.borda, borderWidth: 1,
+    });
+
+    // Cursor interno ao card, começa no topo interno
+    let cy = cardTop - PADDING_CARD;
+
+    // — Linha 1: código · tipo  +  tag de status —
+    pg.drawText(`#${man.codigo} · ${man.tipo_nome}`, {
+      x: MAR + PADDING_CARD,
+      y: cy - TAM_CODIGO * 0.85,
+      size: TAM_CODIGO, font: fontN, color: COR.suave,
+    });
+
+    // Tag de status
+    const tagTxt = ROTULO_STATUS[man.status] ?? man.status;
+    const tagW   = fontN.widthOfTextAtSize(tagTxt, 8) + 12;
+    const tagCor = COR_STATUS[man.status] ?? COR.suave;
+    pg.drawRectangle({
+      x: PG_W - MAR - PADDING_CARD - tagW,
+      y: cy - TAM_CODIGO * 0.85 - 3,
+      width: tagW, height: 13,
+      color: tagCor,
+    });
+    pg.drawText(tagTxt, {
+      x: PG_W - MAR - PADDING_CARD - tagW + 6,
+      y: cy - TAM_CODIGO * 0.85,
+      size: 8, font: fontN, color: COR.branco,
+    });
+
+    cy -= hCodigo;
+
+    // — Local —
+    cy -= drawText(pg, man.local_descricao, fontB, TAM_LOCAL, COR.texto, MAR + PADDING_CARD, cy, INNER_W, LEADING);
+    cy -= 4;
+
+    // — Descrição —
+    cy -= drawText(pg, man.descricao, fontN, TAM_DESC, COR.texto, MAR + PADDING_CARD, cy, INNER_W, LEADING);
+    cy -= 2;
+
+    // — Meta (registrado por/em) —
+    const metaTxt = `Registrado em ${fmtDataHora(man.registrado_em)} por ${man.registrado_por_nome}`;
+    cy -= drawText(pg, metaTxt, fontN, TAM_META, COR.suave, MAR + PADDING_CARD, cy, INNER_W, LEADING);
+    cy -= 6;
+
+    // — Fotos de registro —
+    if (man.fotosRegistro.length > 0) {
+      let fx = MAR + PADDING_CARD;
+      for (const foto of man.fotosRegistro.slice(0, 5)) {
+        try {
+          const bytes = Buffer.from(foto.dataUri.split(",")[1], "base64");
+          const img   = await doc.embedJpg(bytes);
+          const dim   = img.scaleToFit(84, 84);
+          pg.drawImage(img, { x: fx, y: cy - dim.height, width: dim.width, height: dim.height });
+          fx += dim.width + 4;
+        } catch { /* foto corrompida: ignora */ }
+      }
+      cy -= 88 + 6;
+    }
+
+    // — Bloco de resolução —
     if (man.status === "resolvida") {
-      paginaAtual.drawLine({
-        start: { x: MARGEM + PADDING, y: cy },
-        end:   { x: PG_W - MARGEM - PADDING, y: cy },
+      // Linha separadora
+      pg.drawLine({
+        start: { x: MAR + PADDING_CARD, y: cy },
+        end:   { x: PG_W - MAR - PADDING_CARD, y: cy },
         thickness: 0.5, color: COR.borda,
       });
       cy -= 8;
 
-      paginaAtual.drawText("Resolução", {
-        x: MARGEM + PADDING, y: cy, size: 8.5, font: fontBold, color: COR.resolvida,
+      // Label "Resolução"
+      pg.drawText("Resolução", {
+        x: MAR + PADDING_CARD,
+        y: cy - 8.5 * 0.85,
+        size: 8.5, font: fontB, color: COR.resolvida,
       });
-      cy -= 12;
+      cy -= 14;
 
+      // Texto da resolução
       if (man.resolucao_descricao) {
-        const altRes = desenharTextoQuebrado(
-          paginaAtual, man.resolucao_descricao, fontNormal, 9.5, COR.texto,
-          MARGEM + PADDING, cy, INNER_W
-        );
-        cy -= altRes;
+        cy -= drawText(pg, man.resolucao_descricao, fontN, TAM_DESC, COR.texto, MAR + PADDING_CARD, cy, INNER_W, LEADING);
+        cy -= 2;
       }
 
+      // Data de resolução
       if (man.resolvido_em) {
-        paginaAtual.drawText(`Resolvida em ${formatarDataHora(man.resolvido_em)}`, {
-          x: MARGEM + PADDING, y: cy, size: 8, font: fontNormal, color: COR.suave,
-        });
-        cy -= altMeta;
+        cy -= drawText(
+          pg, `Resolvida em ${fmtDataHora(man.resolvido_em)}`,
+          fontN, TAM_META, COR.suave, MAR + PADDING_CARD, cy, INNER_W, LEADING
+        );
+        cy -= 4;
       }
 
+      // Fotos de resolução
       if (man.fotosResolucao.length > 0) {
-        let fx = MARGEM + PADDING;
+        let fx = MAR + PADDING_CARD;
         for (const foto of man.fotosResolucao.slice(0, 5)) {
           try {
-            const imgBytes = Buffer.from(foto.dataUri.split(",")[1], "base64");
-            const img = await doc.embedJpg(imgBytes);
-            const dim = img.scaleToFit(84, 84);
-            paginaAtual.drawImage(img, { x: fx, y: cy - dim.height, width: dim.width, height: dim.height });
+            const bytes = Buffer.from(foto.dataUri.split(",")[1], "base64");
+            const img   = await doc.embedJpg(bytes);
+            const dim   = img.scaleToFit(84, 84);
+            pg.drawImage(img, { x: fx, y: cy - dim.height, width: dim.width, height: dim.height });
             fx += dim.width + 4;
-          } catch { /* ignora foto corrompida */ }
+          } catch { /* foto corrompida: ignora */ }
         }
-        cy -= 88;
+        cy -= 88 + 6;
       }
     }
 
-    y -= altCard + 8;
+    curY = cardBot - 10; // espaço entre cards
   }
 
   // Rodapé da última página
-  desenharRodape(paginaAtual, paginas.length);
+  desenharRodape(pg, numPg);
 
   return doc.save();
 }

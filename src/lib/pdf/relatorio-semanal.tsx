@@ -6,25 +6,21 @@ import fs from "fs";
 import path from "path";
 import type { FotoParaPdf } from "./imagens";
 
-// Carrega a logo uma única vez quando o módulo é importado.
-// process.cwd() aponta para a raiz do projeto Next.js em ambiente de
-// desenvolvimento e produção (runtime Node), onde public/ está disponível.
-function carregarLogoBase64(): string {
+// A logo é carregada de forma lazy (primeira chamada) para evitar que o
+// fs.readFileSync seja executado no nível do módulo durante o bootstrap
+// do servidor — o que causaria falha antes mesmo de qualquer requisição.
+let _logoBase64: string | undefined;
+function obterLogoBase64(): string {
+  if (_logoBase64 !== undefined) return _logoBase64;
   try {
     const logoPath = path.join(process.cwd(), "public", "marca.png");
     const buffer = fs.readFileSync(logoPath);
-    return `data:image/png;base64,${buffer.toString("base64")}`;
+    _logoBase64 = `data:image/png;base64,${buffer.toString("base64")}`;
   } catch {
-    return "";
+    _logoBase64 = "";
   }
+  return _logoBase64;
 }
-
-const LOGO_BASE64 = carregarLogoBase64();
-
-// Fontes: usar Helvetica embutida do PDF em vez de baixar Inter do Google
-// Fonts durante a geração — a função serverless não deve depender de uma
-// chamada de rede extra só para renderizar texto, e Helvetica já é
-// suficientemente próxima do padrão visual do restante do sistema em PDF.
 
 const CORES = {
   primaria: "#1463D9",
@@ -100,7 +96,12 @@ const estilos = StyleSheet.create({
     borderTopWidth: 1,
     borderTopColor: CORES.borda,
   },
-  rotuloResolucao: { fontSize: 8.5, fontFamily: "Helvetica-Bold", color: CORES.resolvida, marginBottom: 3 },
+  rotuloResolucao: {
+    fontSize: 8.5,
+    fontFamily: "Helvetica-Bold",
+    color: CORES.resolvida,
+    marginBottom: 3,
+  },
 
   rodape: {
     position: "absolute",
@@ -166,6 +167,7 @@ export function RelatorioSemanal({
   periodoFim,
   manutencoes,
 }: RelatorioSemanalProps) {
+  const logoBase64 = obterLogoBase64();
   const resolvidas = manutencoes.filter((m) => m.status === "resolvida").length;
   const pendentes = manutencoes.filter((m) => m.status === "pendente").length;
   const andamento = manutencoes.filter((m) => m.status === "em_andamento").length;
@@ -176,8 +178,8 @@ export function RelatorioSemanal({
       <Page size="A4" style={estilos.pagina} wrap>
         <View style={estilos.cabecalho} fixed>
           <View>
-            {LOGO_BASE64 ? (
-              <Image src={LOGO_BASE64} style={estilos.logoMarca} />
+            {logoBase64 ? (
+              <Image src={logoBase64} style={estilos.logoMarca} />
             ) : (
               <Text style={estilos.tituloSistema}>Evolux</Text>
             )}
@@ -221,7 +223,9 @@ export function RelatorioSemanal({
             <View key={manutencao.codigo} style={estilos.cardManutencao} wrap={false}>
               <View style={estilos.linhaCabecalhoCard}>
                 <View>
-                  <Text style={estilos.codigo}>#{manutencao.codigo} · {manutencao.tipo_nome}</Text>
+                  <Text style={estilos.codigo}>
+                    #{manutencao.codigo} · {manutencao.tipo_nome}
+                  </Text>
                   <Text style={estilos.local}>{manutencao.local_descricao}</Text>
                 </View>
                 <Text

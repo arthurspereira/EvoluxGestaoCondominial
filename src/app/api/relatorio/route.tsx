@@ -107,7 +107,7 @@ export async function GET(request: NextRequest) {
 
   const nomeArquivo = `relatorio-${slugificar(cliente.nome)}-${de}-a-${ate}.pdf`;
 
-  return new Response(pdfBytes, {
+  return new Response(Buffer.from(pdfBytes), {
     headers: {
       "Content-Type": "application/pdf",
       "Content-Disposition": `attachment; filename="${nomeArquivo}"`,

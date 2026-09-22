@@ -2,11 +2,11 @@
 const nextConfig = {
   experimental: {
     serverActions: { bodySizeLimit: "10mb" },
+    // sharp usa binários nativos — precisa ser externo para não ser
+    // empacotado pelo webpack no bundle serverless.
+    // Nota: no Next.js 14 esta chave ainda fica dentro de experimental.
+    serverComponentsExternalPackages: ["sharp"],
   },
-
-  // sharp usa binários nativos — precisa ser externo para não ser
-  // empacotado pelo webpack do Next.js no bundle serverless.
-  serverExternalPackages: ["sharp"],
 };
 
 export default nextConfig;

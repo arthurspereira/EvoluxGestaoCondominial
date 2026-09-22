@@ -1,14 +1,13 @@
 import { NextRequest } from "next/server";
 import { criarClienteServidor } from "@/lib/supabase/server";
 import { prepararFotosParaPdf } from "@/lib/pdf/imagens";
-import type { ManutencaoParaPdf } from "@/lib/pdf/relatorio-semanal";
-import type { Cliente, ManutencaoDetalhada, ManutencaoFoto } from "@/types/database";
+import { gerarRelatorioSemanal, type ManutencaoParaPdf } from "@/lib/pdf/relatorio-semanal";
+import type { ManutencaoDetalhada, ManutencaoFoto } from "@/types/database";
 
-// @react-pdf/renderer e sharp precisam do runtime Node — não funcionam
-// no Edge Runtime.
+// pdf-lib usa apenas JavaScript puro — funciona em Node runtime sem
+// depender de binários nativos ou arquivos de fontes externos.
 export const runtime = "nodejs";
 // O relatório pode baixar e converter várias fotos antes de renderizar o PDF.
-// O limite padrão de 10 s da função é insuficiente para esse fluxo em produção.
 export const maxDuration = 30;
 
 function slugificar(texto: string) {
@@ -32,8 +31,6 @@ export async function GET(request: NextRequest) {
 
   const supabase = await criarClienteServidor();
 
-  // getUser() força a verificação da sessão (RLS já protege as tabelas,
-  // mas falhar cedo aqui evita gastar tempo baixando fotos à toa).
   const { data: sessao } = await supabase.auth.getUser();
   if (!sessao.user) {
     return new Response("Não autenticado.", { status: 401 });
@@ -71,8 +68,6 @@ export async function GET(request: NextRequest) {
 
   const listaFotos = fotos ?? [];
 
-  // Converte cada foto uma única vez (independente de aparecer em
-  // "registro" ou "resolução") e reaproveita pelo caminho no Storage.
   const fotosConvertidas = await prepararFotosParaPdf(
     supabase,
     listaFotos.map((f) => f.storage_path)
@@ -102,26 +97,17 @@ export async function GET(request: NextRequest) {
     };
   });
 
-  // Import dinâmico: garante que o @react-pdf/renderer (e o pdfkit que ele
-  // usa internamente) só seja carregado aqui dentro, nunca no bootstrap do
-  // servidor. Isso evita o erro de MODULE_NOT_FOUND das fontes do pdfkit
-  // que ocorre quando o módulo é avaliado estaticamente pelo Next.js.
-  const { renderToBuffer } = await import("@react-pdf/renderer");
-  const { RelatorioSemanal } = await import("@/lib/pdf/relatorio-semanal");
-
-  const buffer = await renderToBuffer(
-    <RelatorioSemanal
-      clienteNome={cliente.nome}
-      sindico={cliente.sindico}
-      periodoInicio={de}
-      periodoFim={ate}
-      manutencoes={manutencoesParaPdf}
-    />
-  );
+  const pdfBytes = await gerarRelatorioSemanal({
+    clienteNome: cliente.nome,
+    sindico: cliente.sindico,
+    periodoInicio: de,
+    periodoFim: ate,
+    manutencoes: manutencoesParaPdf,
+  });
 
   const nomeArquivo = `relatorio-${slugificar(cliente.nome)}-${de}-a-${ate}.pdf`;
 
-  return new Response(new Uint8Array(buffer), {
+  return new Response(pdfBytes, {
     headers: {
       "Content-Type": "application/pdf",
       "Content-Disposition": `attachment; filename="${nomeArquivo}"`,

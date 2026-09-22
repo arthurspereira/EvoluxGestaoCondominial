@@ -8,6 +8,9 @@ import type { Cliente, ManutencaoDetalhada, ManutencaoFoto } from "@/types/datab
 // @react-pdf/renderer e sharp precisam do runtime Node — não funcionam
 // no Edge Runtime.
 export const runtime = "nodejs";
+// O relatório pode baixar e converter várias fotos antes de renderizar o PDF.
+// O limite padrão de 10 s da função é insuficiente para esse fluxo em produção.
+export const maxDuration = 30;
 
 function slugificar(texto: string) {
   return texto

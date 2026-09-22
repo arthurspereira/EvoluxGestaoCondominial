@@ -49,3 +49,13 @@
     min-width: 44px;
   }
 }
+
+/* Alinha corretamente o ícone nativo do calendário em inputs type="date".
+   O display:block + box-sizing garante que o browser posicione o ícone
+   dentro da borda, e não sobreposto ao texto ou à label. */
+@layer base {
+  input[type="date"] {
+    display: block;
+    box-sizing: border-box;
+  }
+}

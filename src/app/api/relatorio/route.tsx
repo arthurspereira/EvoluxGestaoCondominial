@@ -1,8 +1,7 @@
 import { NextRequest } from "next/server";
-import { renderToBuffer } from "@react-pdf/renderer";
 import { criarClienteServidor } from "@/lib/supabase/server";
 import { prepararFotosParaPdf } from "@/lib/pdf/imagens";
-import { RelatorioSemanal, type ManutencaoParaPdf } from "@/lib/pdf/relatorio-semanal";
+import type { ManutencaoParaPdf } from "@/lib/pdf/relatorio-semanal";
 import type { Cliente, ManutencaoDetalhada, ManutencaoFoto } from "@/types/database";
 
 // @react-pdf/renderer e sharp precisam do runtime Node — não funcionam
@@ -102,6 +101,13 @@ export async function GET(request: NextRequest) {
       fotosResolucao: paraFotosPdf("resolucao"),
     };
   });
+
+  // Import dinâmico: garante que o @react-pdf/renderer (e o pdfkit que ele
+  // usa internamente) só seja carregado aqui dentro, nunca no bootstrap do
+  // servidor. Isso evita o erro de MODULE_NOT_FOUND das fontes do pdfkit
+  // que ocorre quando o módulo é avaliado estaticamente pelo Next.js.
+  const { renderToBuffer } = await import("@react-pdf/renderer");
+  const { RelatorioSemanal } = await import("@/lib/pdf/relatorio-semanal");
 
   const buffer = await renderToBuffer(
     <RelatorioSemanal

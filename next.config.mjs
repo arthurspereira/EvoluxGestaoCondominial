@@ -2,19 +2,21 @@
 const nextConfig = {
   experimental: {
     serverActions: { bodySizeLimit: "10mb" },
-
-    // Pacotes que devem ser tratados como externos no bundle serverless.
-    // @react-pdf/renderer carrega fontes e assets via sistema de arquivos
-    // em runtime — fazer bundle quebra essa resolução no Lambda/Vercel.
-    // sharp e pdfkit também dependem de binários nativos ou assets externos.
-    serverComponentsExternalPackages: [
-      "sharp",
-      "@react-pdf/renderer",
-      "@react-pdf/layout",
-      "@react-pdf/font",
-      "pdfkit",
-    ],
   },
+
+  // Pacotes que devem ser tratados como externos no bundle serverless.
+  // @react-pdf/renderer e suas dependências (pdfkit, fontkit) carregam
+  // fontes e assets via filesystem em runtime — empacotar esses módulos
+  // quebra a resolução de caminhos no Lambda/Vercel.
+  // Nota: no Next.js 14+ esta chave fica no nível raiz, não em experimental.
+  serverExternalPackages: [
+    "sharp",
+    "@react-pdf/renderer",
+    "@react-pdf/layout",
+    "@react-pdf/font",
+    "pdfkit",
+    "fontkit",
+  ],
 };
 
 export default nextConfig;

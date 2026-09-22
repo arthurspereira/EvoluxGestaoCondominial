@@ -64,7 +64,7 @@ export default async function PaginaRelatorios() {
               type="date"
               required
               defaultValue={inicioSemana}
-              className="toque-confortavel flex w-full rounded-md border border-input bg-background px-3 py-2 text-base"
+              className="toque-confortavel w-full rounded-md border border-input bg-background px-3 py-2 text-base"
             />
           </div>
           <div className="space-y-1.5">
@@ -77,7 +77,7 @@ export default async function PaginaRelatorios() {
               type="date"
               required
               defaultValue={fimSemana}
-              className="toque-confortavel flex w-full rounded-md border border-input bg-background px-3 py-2 text-base"
+              className="toque-confortavel w-full rounded-md border border-input bg-background px-3 py-2 text-base"
             />
           </div>
         </div>
